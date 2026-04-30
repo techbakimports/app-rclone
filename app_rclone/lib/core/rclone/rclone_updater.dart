@@ -43,9 +43,11 @@ class RcloneUpdater {
     final assets = (data['assets'] as List).cast<Map<String, dynamic>>();
 
     final asset = assets.firstWhere(
-      (a) => (a['name'] as String).contains('android-arm64'),
-      orElse: () =>
-          throw Exception('No android-arm64 asset found in $version'),
+      (a) {
+        final name = a['name'] as String;
+        return name.contains('android-arm64') || name.contains('linux-arm64');
+      },
+      orElse: () => throw Exception('No ARM64 asset found in $version'),
     );
 
     return RcloneRelease(

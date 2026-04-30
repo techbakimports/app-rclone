@@ -217,7 +217,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ),
               const SizedBox(height: 4),
               const Text(
-                'TechKBak Solutions',
+                'TechBak Solutions',
                 style: TextStyle(
                   fontSize: 16,
                   fontWeight: FontWeight.w700,
