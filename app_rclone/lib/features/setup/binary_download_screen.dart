@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/rclone_providers.dart';
-import '../../core/rclone/rclone_service.dart';
 import '../../core/rclone/rclone_updater.dart';
 import '../../app.dart';
 
@@ -52,25 +51,6 @@ class _BinaryDownloadScreenState extends ConsumerState<BinaryDownloadScreen> {
       }
     } finally {
       updater.dispose();
-    }
-  }
-
-  Future<void> _useTermux() async {
-    setState(() {
-      _busy = true;
-      _hasError = false;
-      _statusText = 'Scanning for Termux rclone…';
-    });
-    final path = await RcloneService.detectTermuxRclone();
-    if (!mounted) return;
-    if (path != null) {
-      ref.read(binaryStatusProvider.notifier).markReady(path);
-    } else {
-      setState(() {
-        _busy = false;
-        _hasError = true;
-        _statusText = 'Termux rclone not found.\nInstall it with: pkg install rclone';
-      });
     }
   }
 
@@ -194,7 +174,7 @@ class _BinaryDownloadScreenState extends ConsumerState<BinaryDownloadScreen> {
                   ),
                 ),
                 const SizedBox(height: 32),
-                if (!_busy) ...[
+                if (!_busy)
                   SizedBox(
                     width: double.infinity,
                     child: FilledButton.icon(
@@ -203,20 +183,12 @@ class _BinaryDownloadScreenState extends ConsumerState<BinaryDownloadScreen> {
                         _release != null ? Icons.download : Icons.refresh,
                       ),
                       label: Text(
-                        _release != null ? 'Download & Install' : 'Retry',
+                        _release != null
+                            ? 'Download & Install'
+                            : 'Retry',
                       ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton.icon(
-                      onPressed: _useTermux,
-                      icon: const Icon(Icons.terminal, size: 18),
-                      label: const Text('Use Termux rclone'),
-                    ),
-                  ),
-                ],
               ],
             ),
           ),

@@ -1,29 +1,15 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/services.dart';
 
 class RcloneService {
   static const _ch = MethodChannel('com.apprclone.app_rclone/rclone');
   static const _authCh = EventChannel('com.apprclone.app_rclone/auth');
 
-  static const _termuxPaths = [
-    '/data/data/com.termux/files/usr/bin/rclone',
-    '/data/user/0/com.termux/files/usr/bin/rclone',
-  ];
-
   String? _binaryPath;
   String? _configPath;
 
   String? get binaryPath => _binaryPath;
   String? get configPath => _configPath;
-
-  /// Looks for rclone installed via Termux (apt/pkg). Returns path or null.
-  static Future<String?> detectTermuxRclone() async {
-    for (final path in _termuxPaths) {
-      if (await File(path).exists()) return path;
-    }
-    return null;
-  }
 
   /// Returns true when the binary is available and ready to use.
   Future<bool> initialize() async {
@@ -32,14 +18,7 @@ class RcloneService {
       _binaryPath = await _ch.invokeMethod<String>('extractBinary');
       return _binaryPath != null;
     } on PlatformException catch (e) {
-      if (e.code == 'BINARY_NOT_FOUND') {
-        final termuxPath = await detectTermuxRclone();
-        if (termuxPath != null) {
-          _binaryPath = termuxPath;
-          return true;
-        }
-        return false;
-      }
+      if (e.code == 'BINARY_NOT_FOUND') return false;
       rethrow;
     }
   }
