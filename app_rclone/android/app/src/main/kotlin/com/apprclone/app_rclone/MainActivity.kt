@@ -66,6 +66,14 @@ class MainActivity : FlutterActivity() {
                         RcloneForegroundService.clearLogs()
                         result.success(null)
                     }
+                    "setExecutable" -> {
+                        val path = call.argument<String>("path") ?: run {
+                            result.error("MISSING_ARG", "path required", null)
+                            return@setMethodCallHandler
+                        }
+                        File(path).setExecutable(true, false)
+                        result.success(null)
+                    }
                     "startAuth" -> {
                         val type = call.argument<String>("type") ?: run {
                             result.error("MISSING_ARG", "type required", null)

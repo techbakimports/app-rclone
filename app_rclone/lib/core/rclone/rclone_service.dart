@@ -23,6 +23,11 @@ class RcloneService {
     }
   }
 
+  /// Sets the binary executable via native File.setExecutable() — more reliable than chmod on Android.
+  Future<void> setExecutable(String path) async {
+    await _ch.invokeMethod<void>('setExecutable', {'path': path});
+  }
+
   /// Sets a known binary path after a successful download (no native call needed).
   void setBinaryPath(String path) => _binaryPath = path;
 
