@@ -21,8 +21,7 @@ class RcloneRelease {
 class RcloneUpdater {
   static const _githubLatest =
       'https://api.github.com/repos/rclone/rclone/releases/latest';
-  static const _githubReleases =
-      'https://api.github.com/repos/rclone/rclone/releases?per_page=10';
+  static const _downloadBase = 'https://downloads.rclone.org';
   static const _headers = {'Accept': 'application/vnd.github.v3+json'};
 
   final http.Client _client;
@@ -30,67 +29,48 @@ class RcloneUpdater {
   RcloneUpdater({http.Client? client}) : _client = client ?? http.Client();
 
   Future<RcloneRelease> fetchLatestRelease() async {
-    // Try the latest release first
-    final latest = await _tryExtractAndroidAsset(_githubLatest, single: true);
-    if (latest != null) return latest;
-
-    // Latest release has no android-arm64 build; search recent releases
+    // Get latest version tag from GitHub
     final res = await _client
-        .get(Uri.parse(_githubReleases), headers: _headers)
+        .get(Uri.parse(_githubLatest), headers: _headers)
         .timeout(const Duration(seconds: 20));
 
     if (res.statusCode != 200) {
       throw Exception('GitHub API returned ${res.statusCode}');
     }
 
-    final releases =
-        (jsonDecode(res.body) as List).cast<Map<String, dynamic>>();
+    final version =
+        (jsonDecode(res.body) as Map<String, dynamic>)['tag_name'] as String;
 
-    for (final release in releases) {
-      final found = _pickAndroidAsset(
-        release['tag_name'] as String,
-        (release['assets'] as List).cast<Map<String, dynamic>>(),
+    // Try versioned URL on rclone's download server (consistent naming)
+    final versionedUrl =
+        '$_downloadBase/$version/rclone-$version-android-arm64.zip';
+    final release = await _tryUrl(version, versionedUrl);
+    if (release != null) return release;
+
+    // Fallback: "current" alias always points to latest stable android-arm64
+    const currentUrl = '$_downloadBase/rclone-current-android-arm64.zip';
+    final current = await _tryUrl('latest', currentUrl);
+    if (current != null) return current;
+
+    throw Exception('android-arm64 build not available on downloads.rclone.org');
+  }
+
+  Future<RcloneRelease?> _tryUrl(String version, String url) async {
+    try {
+      final res = await _client
+          .head(Uri.parse(url))
+          .timeout(const Duration(seconds: 15));
+      if (res.statusCode != 200) return null;
+      final sizeBytes =
+          int.tryParse(res.headers['content-length'] ?? '') ?? 0;
+      return RcloneRelease(
+        version: version,
+        downloadUrl: url,
+        sizeBytes: sizeBytes,
       );
-      if (found != null) return found;
+    } catch (_) {
+      return null;
     }
-
-    throw Exception('No android-arm64 build found in recent rclone releases');
-  }
-
-  Future<RcloneRelease?> _tryExtractAndroidAsset(
-    String url, {
-    bool single = false,
-  }) async {
-    final res = await _client
-        .get(Uri.parse(url), headers: _headers)
-        .timeout(const Duration(seconds: 20));
-
-    if (res.statusCode != 200) {
-      throw Exception('GitHub API returned ${res.statusCode}');
-    }
-
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    return _pickAndroidAsset(
-      data['tag_name'] as String,
-      (data['assets'] as List).cast<Map<String, dynamic>>(),
-    );
-  }
-
-  RcloneRelease? _pickAndroidAsset(
-    String version,
-    List<Map<String, dynamic>> assets,
-  ) {
-    for (final a in assets) {
-      final name = a['name'] as String;
-      if (name.endsWith('.zip') && name.contains('android-arm64')) {
-        return RcloneRelease(
-          version: version,
-          downloadUrl: a['browser_download_url'] as String,
-          sizeBytes: a['size'] as int,
-        );
-      }
-    }
-    return null;
   }
 
   /// Downloads and installs the rclone binary.
