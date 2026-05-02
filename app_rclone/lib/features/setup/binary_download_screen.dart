@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/rclone_providers.dart';
-import '../../core/rclone/rclone_service.dart';
 import '../../core/rclone/rclone_updater.dart';
 import '../../app.dart';
 

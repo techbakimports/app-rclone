@@ -9,7 +9,25 @@ import '../models/file_item.dart';
 // ── Singleton services ────────────────────────────────────────────────────────
 
 final rcloneServiceProvider = Provider<RcloneService>((_) => RcloneService());
-final rcloneApiProvider = Provider<RcloneApi>((_) => RcloneApi());
+
+// ── Daemon credentials (port + auth) ─────────────────────────────────────────
+// Null until the daemon starts and credentials are resolved.
+// When updated, rcloneApiProvider rebuilds automatically.
+
+final daemonCredentialsProvider =
+    StateProvider<DaemonCredentials?>((_) => null);
+
+// ── HTTP API client ───────────────────────────────────────────────────────────
+// Rebuilt whenever credentials change (new port / new session).
+
+final rcloneApiProvider = Provider<RcloneApi>((ref) {
+  final creds = ref.watch(daemonCredentialsProvider);
+  return RcloneApi(
+    baseUrl: creds != null ? creds.baseUrl : 'http://127.0.0.1:5572',
+    username: creds?.user,
+    password: creds?.pass,
+  );
+});
 
 // ── Binary availability ───────────────────────────────────────────────────────
 
@@ -78,19 +96,32 @@ class DaemonState {
 
 class DaemonNotifier extends StateNotifier<DaemonState> {
   final RcloneService _service;
-  final RcloneApi _api;
+  final Ref _ref;
 
-  DaemonNotifier(this._service, this._api)
+  DaemonNotifier(this._service, this._ref)
       : super(const DaemonState(status: DaemonStatus.stopped));
+
+  // Read the fresh API instance each time (rebuilds when credentials change).
+  RcloneApi get _api => _ref.read(rcloneApiProvider);
 
   Future<void> start() async {
     if (state.status == DaemonStatus.starting) return;
     state = const DaemonState(status: DaemonStatus.starting);
     try {
       await _service.startDaemon();
-      // Poll until the daemon responds or we time out
-      final deadline = DateTime.now().add(const Duration(seconds: 15));
+
+      // Poll until the daemon responds or we time out.
+      // Credentials are loaded as soon as they're available so the API
+      // can authenticate before the daemon is fully ready.
+      final deadline = DateTime.now().add(const Duration(seconds: 20));
       while (DateTime.now().isBefore(deadline)) {
+        // Load credentials as soon as the service allocates them.
+        if (_ref.read(daemonCredentialsProvider) == null) {
+          final creds = await _service.getDaemonCredentials();
+          if (creds != null) {
+            _ref.read(daemonCredentialsProvider.notifier).state = creds;
+          }
+        }
         if (await _api.ping()) {
           state = const DaemonState(status: DaemonStatus.running);
           return;
@@ -99,7 +130,7 @@ class DaemonNotifier extends StateNotifier<DaemonState> {
       }
       state = const DaemonState(
         status: DaemonStatus.error,
-        errorMessage: 'Daemon did not respond within 15 seconds',
+        errorMessage: 'Daemon did not respond within 20 seconds',
       );
     } catch (e) {
       state = DaemonState(
@@ -111,14 +142,21 @@ class DaemonNotifier extends StateNotifier<DaemonState> {
 
   Future<void> stop() async {
     await _service.stopDaemon();
+    _ref.read(daemonCredentialsProvider.notifier).state = null;
     state = const DaemonState(status: DaemonStatus.stopped);
   }
 
   Future<void> checkRunning() async {
     final alive = await _api.ping();
     if (alive && !state.isRunning) {
+      // Daemon recovered or was started externally — refresh credentials.
+      final creds = await _service.getDaemonCredentials();
+      if (creds != null) {
+        _ref.read(daemonCredentialsProvider.notifier).state = creds;
+      }
       state = const DaemonState(status: DaemonStatus.running);
     } else if (!alive && state.isRunning) {
+      _ref.read(daemonCredentialsProvider.notifier).state = null;
       state = const DaemonState(status: DaemonStatus.stopped);
     }
   }
@@ -126,11 +164,12 @@ class DaemonNotifier extends StateNotifier<DaemonState> {
 
 final daemonProvider =
     StateNotifierProvider<DaemonNotifier, DaemonState>((ref) {
-  return DaemonNotifier(
-    ref.watch(rcloneServiceProvider),
-    ref.watch(rcloneApiProvider),
-  );
+  return DaemonNotifier(ref.watch(rcloneServiceProvider), ref);
 });
+
+// ── SAF bridge ────────────────────────────────────────────────────────────────
+
+final safBridgeProvider = StateProvider<SafBridgeInfo?>((_) => null);
 
 // ── Remotes ───────────────────────────────────────────────────────────────────
 

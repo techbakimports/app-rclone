@@ -13,10 +13,29 @@ class RcloneApiException implements Exception {
 }
 
 class RcloneApi {
-  static const String _base = 'http://127.0.0.1:5572';
+  final String _base;
+  final String? _username;
+  final String? _password;
   final http.Client _client;
 
-  RcloneApi({http.Client? client}) : _client = client ?? http.Client();
+  RcloneApi({
+    String baseUrl = 'http://127.0.0.1:5572',
+    String? username,
+    String? password,
+    http.Client? client,
+  })  : _base = baseUrl,
+        _username = username,
+        _password = password,
+        _client = client ?? http.Client();
+
+  Map<String, String> get _headers {
+    final h = <String, String>{'Content-Type': 'application/json'};
+    if (_username != null && _password != null) {
+      final creds = base64Encode(utf8.encode('$_username:$_password'));
+      h['Authorization'] = 'Basic $creds';
+    }
+    return h;
+  }
 
   Future<Map<String, dynamic>> _post(
     String endpoint, [
@@ -26,7 +45,7 @@ class RcloneApi {
     final response = await _client
         .post(
           uri,
-          headers: {'Content-Type': 'application/json'},
+          headers: _headers,
           body: body != null ? jsonEncode(body) : '{}',
         )
         .timeout(const Duration(seconds: 30));
@@ -278,14 +297,12 @@ class RcloneApi {
 
   // ── Helpers ───────────────────────────────────────────────────────────────
 
-  /// Given "remote:path/to/dir", returns "remote:" (the fs)
   String _fsFromPath(String fullPath) {
     final colon = fullPath.indexOf(':');
     if (colon < 0) return fullPath;
     return fullPath.substring(0, colon + 1);
   }
 
-  /// Given "remote:path/to/dir", returns "path/to/dir" (the remote part)
   String _remoteFromPath(String fullPath) {
     final colon = fullPath.indexOf(':');
     if (colon < 0) return '';

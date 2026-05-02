@@ -1,6 +1,34 @@
 import 'dart:async';
 import 'package:flutter/services.dart';
 
+class DaemonCredentials {
+  final int port;
+  final String user;
+  final String pass;
+
+  const DaemonCredentials({
+    required this.port,
+    required this.user,
+    required this.pass,
+  });
+
+  String get baseUrl => 'http://127.0.0.1:$port';
+}
+
+class SafBridgeInfo {
+  final int port;
+  final String user;
+  final String pass;
+
+  const SafBridgeInfo({
+    required this.port,
+    required this.user,
+    required this.pass,
+  });
+
+  String get webdavUrl => 'http://127.0.0.1:$port';
+}
+
 class RcloneService {
   static const _ch = MethodChannel('com.apprclone.app_rclone/rclone');
   static const _authCh = EventChannel('com.apprclone.app_rclone/auth');
@@ -11,7 +39,6 @@ class RcloneService {
   String? get binaryPath => _binaryPath;
   String? get configPath => _configPath;
 
-  /// Returns true when the binary is available and ready to use.
   Future<bool> initialize() async {
     _configPath = await _ch.invokeMethod<String>('getConfigPath');
     try {
@@ -23,12 +50,10 @@ class RcloneService {
     }
   }
 
-  /// Sets the binary executable via native File.setExecutable() — more reliable than chmod on Android.
   Future<void> setExecutable(String path) async {
     await _ch.invokeMethod<void>('setExecutable', {'path': path});
   }
 
-  /// Sets a known binary path after a successful download (no native call needed).
   void setBinaryPath(String path) => _binaryPath = path;
 
   Future<void> startDaemon() async {
@@ -40,8 +65,7 @@ class RcloneService {
       'binaryPath': _binaryPath,
       'configPath': _configPath,
     });
-    // Small grace period for daemon to bind on 5572
-    await Future<void>.delayed(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(seconds: 1));
   }
 
   Future<void> stopDaemon() async {
@@ -50,6 +74,20 @@ class RcloneService {
 
   Future<bool> isDaemonRunning() async {
     return await _ch.invokeMethod<bool>('isDaemonRunning') ?? false;
+  }
+
+  // Returns daemon credentials once the service has allocated a port.
+  // Returns null if the daemon hasn't started yet (port == 0).
+  Future<DaemonCredentials?> getDaemonCredentials() async {
+    final raw = await _ch.invokeMethod<Map>('getDaemonCredentials');
+    if (raw == null) return null;
+    final port = raw['port'] as int? ?? 0;
+    if (port == 0) return null;
+    return DaemonCredentials(
+      port: port,
+      user: raw['user'] as String? ?? 'rcloneapp',
+      pass: raw['pass'] as String? ?? '',
+    );
   }
 
   Future<List<String>> getLogs() async {
@@ -61,18 +99,57 @@ class RcloneService {
     await _ch.invokeMethod<void>('clearLogs');
   }
 
-  /// Starts an OAuth authorization for [remoteType].
-  /// Events arrive on the returned broadcast stream:
-  ///   `{'type': 'url', 'url': '...'}` — open this URL in a browser
-  ///   `{'type': 'token', 'token': '{...}'}` — JSON token string
+  // ── OAuth ─────────────────────────────────────────────────────────────────
+
   Stream<Map<dynamic, dynamic>> startAuthFlow(String remoteType) {
     _ch.invokeMethod<void>('startAuth', {'type': remoteType});
-    return _authCh
-        .receiveBroadcastStream()
-        .cast<Map<dynamic, dynamic>>();
+    return _authCh.receiveBroadcastStream().cast<Map<dynamic, dynamic>>();
   }
 
   Future<void> cancelAuth() async {
     await _ch.invokeMethod<void>('cancelAuth');
+  }
+
+  // ── SAF ───────────────────────────────────────────────────────────────────
+
+  /// Opens the Android document-tree picker. Returns the selected URI string,
+  /// or null if the user cancelled.
+  Future<String?> openDocumentTree() async {
+    return _ch.invokeMethod<String?>('openDocumentTree');
+  }
+
+  /// Starts the WebDAV bridge for the given SAF tree URI.
+  /// Returns the bridge credentials so rclone can connect to it.
+  Future<SafBridgeInfo> startSafBridge(String treeUri) async {
+    final raw = await _ch.invokeMethod<Map>('startSafBridge', {'treeUri': treeUri});
+    if (raw == null) throw Exception('startSafBridge returned null');
+    return SafBridgeInfo(
+      port: raw['port'] as int,
+      user: raw['user'] as String,
+      pass: raw['pass'] as String,
+    );
+  }
+
+  Future<void> stopSafBridge() async {
+    await _ch.invokeMethod<void>('stopSafBridge');
+  }
+
+  // ── Background sync (WorkManager) ─────────────────────────────────────────
+
+  /// Enqueues a persistent background sync job via WorkManager.
+  /// Returns the WorkManager job UUID string.
+  Future<String> enqueueSyncJob({
+    required String operation,
+    required String srcFs,
+    required String dstFs,
+    String? label,
+  }) async {
+    final result = await _ch.invokeMethod<String>('enqueueSyncJob', {
+      'operation': operation,
+      'srcFs': srcFs,
+      'dstFs': dstFs,
+      'label': ?label,
+    });
+    return result ?? '';
   }
 }

@@ -1,8 +1,10 @@
 package com.apprclone.app_rclone
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Handler
 import android.os.Looper
+import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
@@ -19,85 +21,156 @@ class MainActivity : FlutterActivity() {
     private var authEventSink: EventChannel.EventSink? = null
     private var authProcess: Process? = null
 
-    // URL regex for auth flow
     private val urlRegex = Regex("""https?://\S+""")
+
+    private val OPEN_DOC_TREE_REQ_CODE = 1001
+
+    // SAF document-tree picker
+    private var safPickCallback: MethodChannel.Result? = null
+
+    // Active SAF WebDAV bridge (at most one at a time)
+    private var safBridge: SafWebDavBridge? = null
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == OPEN_DOC_TREE_REQ_CODE) {
+            val cb = safPickCallback ?: return
+            safPickCallback = null
+            if (resultCode != android.app.Activity.RESULT_OK || data == null) {
+                cb.success(null)
+                return
+            }
+            val uri = data.data
+            if (uri == null) {
+                cb.success(null)
+                return
+            }
+            contentResolver.takePersistableUriPermission(
+                uri,
+                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
+            )
+            cb.success(uri.toString())
+        }
+    }
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
 
         EventChannel(flutterEngine.dartExecutor.binaryMessenger, authChannelName)
             .setStreamHandler(object : EventChannel.StreamHandler {
-                override fun onListen(arguments: Any?, eventSink: EventChannel.EventSink?) {
-                    authEventSink = eventSink
-                }
-                override fun onCancel(arguments: Any?) {
-                    authEventSink = null
-                }
+                override fun onListen(args: Any?, sink: EventChannel.EventSink?) { authEventSink = sink }
+                override fun onCancel(args: Any?) { authEventSink = null }
             })
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
             .setMethodCallHandler { call, result ->
                 when (call.method) {
+
+                    // ── Binary ────────────────────────────────────────────────
                     "extractBinary" -> {
                         val path = findOrExtractBinary()
                         if (path != null) result.success(path)
                         else result.error("BINARY_NOT_FOUND", "rclone binary not available", null)
                     }
                     "getConfigPath" -> result.success(configPath())
-                    "startDaemon" -> {
-                        val binaryPath = call.argument<String>("binaryPath") ?: run {
-                            result.error("MISSING_ARG", "binaryPath required", null)
-                            return@setMethodCallHandler
-                        }
-                        val cfgPath = call.argument<String>("configPath") ?: run {
-                            result.error("MISSING_ARG", "configPath required", null)
-                            return@setMethodCallHandler
-                        }
-                        startDaemon(binaryPath, cfgPath)
-                        result.success(null)
-                    }
-                    "stopDaemon" -> {
-                        stopDaemon()
-                        result.success(null)
-                    }
-                    "isDaemonRunning" -> result.success(RcloneForegroundService.isRunning)
-                    "getLogs" -> result.success(RcloneForegroundService.getLogsSnapshot())
-                    "clearLogs" -> {
-                        RcloneForegroundService.clearLogs()
-                        result.success(null)
-                    }
                     "setExecutable" -> {
                         val path = call.argument<String>("path") ?: run {
-                            result.error("MISSING_ARG", "path required", null)
-                            return@setMethodCallHandler
+                            result.error("MISSING_ARG", "path required", null); return@setMethodCallHandler
                         }
                         File(path).setExecutable(true, false)
                         result.success(null)
                     }
+
+                    // ── Daemon ────────────────────────────────────────────────
+                    "startDaemon" -> {
+                        val bp = call.argument<String>("binaryPath") ?: run {
+                            result.error("MISSING_ARG", "binaryPath required", null); return@setMethodCallHandler
+                        }
+                        val cp = call.argument<String>("configPath") ?: run {
+                            result.error("MISSING_ARG", "configPath required", null); return@setMethodCallHandler
+                        }
+                        startDaemon(bp, cp)
+                        result.success(null)
+                    }
+                    "stopDaemon" -> { stopDaemon(); result.success(null) }
+                    "isDaemonRunning" -> result.success(RcloneForegroundService.isRunning)
+                    "getDaemonCredentials" -> result.success(
+                        mapOf(
+                            "port" to RcloneForegroundService.daemonPort,
+                            "user" to RcloneForegroundService.daemonUser,
+                            "pass" to RcloneForegroundService.daemonPass,
+                        )
+                    )
+
+                    // ── Logs ──────────────────────────────────────────────────
+                    "getLogs" -> result.success(RcloneForegroundService.getLogsSnapshot())
+                    "clearLogs" -> { RcloneForegroundService.clearLogs(); result.success(null) }
+
+                    // ── OAuth auth flow ───────────────────────────────────────
                     "startAuth" -> {
                         val type = call.argument<String>("type") ?: run {
-                            result.error("MISSING_ARG", "type required", null)
+                            result.error("MISSING_ARG", "type required", null); return@setMethodCallHandler
+                        }
+                        val bp = findOrExtractBinary() ?: run {
+                            result.error("BINARY_NOT_FOUND", "binary not available", null); return@setMethodCallHandler
+                        }
+                        result.success(null)
+                        launchAuthProcess(bp, configPath(), type)
+                    }
+                    "cancelAuth" -> { authProcess?.destroyForcibly(); authProcess = null; result.success(null) }
+
+                    // ── SAF ───────────────────────────────────────────────────
+                    "openDocumentTree" -> {
+                        if (safPickCallback != null) {
+                            result.error("BUSY", "A picker is already open", null)
                             return@setMethodCallHandler
                         }
-                        val binaryPath = findOrExtractBinary() ?: run {
-                            result.error("BINARY_NOT_FOUND", "Binary not available", null)
-                            return@setMethodCallHandler
+                        safPickCallback = result
+                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                        startActivityForResult(intent, OPEN_DOC_TREE_REQ_CODE)
+                    }
+                    "startSafBridge" -> {
+                        val treeUri = call.argument<String>("treeUri") ?: run {
+                            result.error("MISSING_ARG", "treeUri required", null); return@setMethodCallHandler
                         }
-                        // Return immediately; events arrive on the auth EventChannel
-                        result.success(null)
-                        launchAuthProcess(binaryPath, configPath(), type)
+                        safBridge?.stop()
+                        val bridge = SafWebDavBridge(this, Uri.parse(treeUri))
+                        bridge.start()
+                        safBridge = bridge
+                        result.success(mapOf(
+                            "port" to bridge.port,
+                            "user" to bridge.user,
+                            "pass" to bridge.password,
+                        ))
                     }
-                    "cancelAuth" -> {
-                        authProcess?.destroyForcibly()
-                        authProcess = null
+                    "stopSafBridge" -> {
+                        safBridge?.stop()
+                        safBridge = null
                         result.success(null)
                     }
+
+                    // ── Background sync jobs (WorkManager) ────────────────────
+                    "enqueueSyncJob" -> {
+                        val op  = call.argument<String>("operation") ?: run {
+                            result.error("MISSING_ARG", "operation required", null); return@setMethodCallHandler
+                        }
+                        val src = call.argument<String>("srcFs") ?: run {
+                            result.error("MISSING_ARG", "srcFs required", null); return@setMethodCallHandler
+                        }
+                        val dst = call.argument<String>("dstFs") ?: run {
+                            result.error("MISSING_ARG", "dstFs required", null); return@setMethodCallHandler
+                        }
+                        val label = call.argument<String>("label") ?: "$op $src"
+                        val jobId = SyncWorker.enqueue(this, op, src, dst, label)
+                        result.success(jobId)
+                    }
+
                     else -> result.notImplemented()
                 }
             }
     }
 
-    // ── Binary ────────────────────────────────────────────────────────────────
+    // ── Binary helpers ────────────────────────────────────────────────────────
 
     private fun findOrExtractBinary(): String? {
         val dest = File(filesDir, "rclone")
@@ -112,7 +185,7 @@ class MainActivity : FlutterActivity() {
             dest.setExecutable(true, false)
             dest.absolutePath
         } catch (_: Exception) {
-            null  // asset not bundled; caller must trigger download
+            null
         }
     }
 
@@ -130,13 +203,12 @@ class MainActivity : FlutterActivity() {
     }
 
     private fun stopDaemon() {
-        val intent = Intent(this, RcloneForegroundService::class.java).apply {
+        startService(Intent(this, RcloneForegroundService::class.java).apply {
             action = RcloneForegroundService.ACTION_STOP
-        }
-        startService(intent)
+        })
     }
 
-    // ── OAuth auth flow ───────────────────────────────────────────────────────
+    // ── OAuth ─────────────────────────────────────────────────────────────────
 
     private fun launchAuthProcess(binaryPath: String, configPath: String, type: String) {
         authProcess?.destroyForcibly()
@@ -157,21 +229,16 @@ class MainActivity : FlutterActivity() {
                 var inTokenBlock = false
 
                 for (line in reader.lineSequence()) {
-                    // Emit auth URL as soon as we see it
                     if (!urlEmitted) {
-                        val match = urlRegex.find(line)
-                        if (match != null) {
+                        urlRegex.find(line)?.let { match ->
                             urlEmitted = true
-                            val url = match.value
                             mainHandler.post {
-                                authEventSink?.success(mapOf("type" to "url", "url" to url))
+                                authEventSink?.success(mapOf("type" to "url", "url" to match.value))
                             }
                         }
                     }
-                    // Detect token block boundaries
                     if (line.contains("Paste the following into your remote machine")) {
-                        inTokenBlock = true
-                        continue
+                        inTokenBlock = true; continue
                     }
                     if (inTokenBlock && line.contains("<---End paste")) {
                         val token = tokenBuf.toString().trim()
@@ -180,15 +247,11 @@ class MainActivity : FlutterActivity() {
                         }
                         break
                     }
-                    if (inTokenBlock) {
-                        tokenBuf.append(line)
-                    }
+                    if (inTokenBlock) tokenBuf.append(line)
                 }
                 process.waitFor()
             } catch (e: Exception) {
-                mainHandler.post {
-                    authEventSink?.error("AUTH_FAILED", e.message, null)
-                }
+                mainHandler.post { authEventSink?.error("AUTH_FAILED", e.message, null) }
             } finally {
                 authProcess = null
             }
