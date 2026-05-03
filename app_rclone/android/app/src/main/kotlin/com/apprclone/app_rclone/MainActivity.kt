@@ -173,6 +173,13 @@ class MainActivity : FlutterActivity() {
     // ── Binary helpers ────────────────────────────────────────────────────────
 
     private fun findOrExtractBinary(): String? {
+        // Primary: binary extracted by Android from jniLibs at install time.
+        // nativeLibraryDir is the only location Android 10+ SELinux allows exec from.
+        val nativeLib = File(applicationInfo.nativeLibraryDir, "librclone.so")
+        if (nativeLib.exists() && nativeLib.length() > 0) {
+            return nativeLib.absolutePath
+        }
+        // Fallback: copy from assets (works on Android < 10; blocked by SELinux on 10+).
         val dest = File(filesDir, "rclone")
         if (dest.exists() && dest.length() > 0) {
             dest.setExecutable(true, false)

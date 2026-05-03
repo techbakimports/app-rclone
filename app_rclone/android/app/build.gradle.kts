@@ -1,4 +1,4 @@
-import java.net.URL
+import java.net.URI
 import java.util.zip.ZipInputStream
 
 plugins {
@@ -8,21 +8,25 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// Downloads the rclone linux-arm64 static binary at build time and places it
-// in assets so the app works offline from the first launch.
+// Downloads the official rclone linux-arm64 static binary at build time and places it
+// in jniLibs so Android's package installer extracts it to nativeLibraryDir at install
+// time. nativeLibraryDir is the only location SELinux allows exec from on Android 10+.
+// The linux-arm64 binary is a statically-linked PIE (ET_DYN) Go binary; it runs on
+// Android arm64 because Android shares the Linux kernel syscall ABI.
 tasks.register("downloadRcloneBinary") {
-    val outputFile = layout.projectDirectory.file("../../assets/rclone/rclone").asFile
+    val outputFile = layout.projectDirectory
+        .file("src/main/jniLibs/arm64-v8a/librclone.so").asFile
 
-    // Skip if the binary is already present (avoids re-downloading every build).
     onlyIf("rclone binary not bundled yet") {
         !outputFile.exists() || outputFile.length() == 0L
     }
 
     doLast {
-        println("> Downloading rclone linux-arm64 binary…")
+        println("> Downloading rclone linux-arm64 static binary…")
         outputFile.parentFile.mkdirs()
 
-        val zipUrl = URL("https://downloads.rclone.org/rclone-current-linux-arm64.zip")
+        val zipUrl = URI("https://downloads.rclone.org/rclone-current-linux-arm64.zip").toURL()
+
         zipUrl.openStream().use { raw ->
             ZipInputStream(raw).use { zis ->
                 var found = false
@@ -32,7 +36,6 @@ tasks.register("downloadRcloneBinary") {
                     if (!entry.isDirectory && entry.name.endsWith("/rclone")) {
                         outputFile.outputStream().use { out -> zis.copyTo(out) }
                         found = true
-                        println("> rclone binary saved: ${outputFile.absolutePath} (${outputFile.length()} bytes)")
                         break
                     }
                     zis.closeEntry()
@@ -41,6 +44,8 @@ tasks.register("downloadRcloneBinary") {
                 if (!found) error("rclone binary not found inside downloaded zip")
             }
         }
+
+        println("> librclone.so ready: ${outputFile.absolutePath} (${outputFile.length() / 1_048_576} MB)")
     }
 }
 
