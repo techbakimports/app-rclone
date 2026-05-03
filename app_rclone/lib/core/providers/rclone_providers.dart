@@ -197,11 +197,11 @@ final jobsProvider = StreamProvider.autoDispose<List<RcloneJob>>((ref) async* {
     } catch (_) {
       yield [];
     }
-    await Future<void>.delayed(const Duration(seconds: 2));
+    await Future<void>.delayed(const Duration(seconds: 3));
   }
 });
 
-// ── Transfer stats (polled every 1 s) ────────────────────────────────────────
+// ── Transfer stats (polled every 2 s) ────────────────────────────────────────
 
 final transferStatsProvider =
     StreamProvider.autoDispose<TransferStats>((ref) async* {
@@ -212,7 +212,7 @@ final transferStatsProvider =
     } catch (_) {
       yield TransferStats.fromJson({});
     }
-    await Future<void>.delayed(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(seconds: 2));
   }
 });
 
@@ -238,7 +238,7 @@ final directoryListingProvider =
   return ref.watch(rcloneApiProvider).listDirectory(remotePath);
 });
 
-// ── Daemon logs (polled every 1 s) ────────────────────────────────────────────
+// ── Daemon logs (polled every 3 s) ────────────────────────────────────────────
 
 final logsProvider = StreamProvider.autoDispose<List<String>>((ref) async* {
   final service = ref.watch(rcloneServiceProvider);
@@ -248,6 +248,6 @@ final logsProvider = StreamProvider.autoDispose<List<String>>((ref) async* {
     } catch (_) {
       yield [];
     }
-    await Future<void>.delayed(const Duration(seconds: 1));
+    await Future<void>.delayed(const Duration(seconds: 3));
   }
 });

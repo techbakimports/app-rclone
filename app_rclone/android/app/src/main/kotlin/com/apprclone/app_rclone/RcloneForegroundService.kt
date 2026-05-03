@@ -84,6 +84,13 @@ class RcloneForegroundService : Service() {
                 val binaryPath = intent.getStringExtra(EXTRA_BINARY_PATH) ?: return START_NOT_STICKY
                 val configPath = intent.getStringExtra(EXTRA_CONFIG_PATH) ?: return START_NOT_STICKY
 
+                // If already running, just refresh the notification — don't
+                // reallocate credentials (that would break getDaemonCredentials).
+                if (isRunning) {
+                    startForeground(NOTIF_DAEMON_ID, buildOngoingNotification("Running on :$daemonPort"))
+                    return START_STICKY
+                }
+
                 // Credentials allocated here (main thread) so they're readable
                 // by getDaemonCredentials before the background thread starts.
                 allocateCredentials()
@@ -101,9 +108,13 @@ class RcloneForegroundService : Service() {
     }
 
     private fun launchDaemonThread(binaryPath: String, configPath: String) {
-        if (isRunning) return
         Thread {
             try {
+                val binFile = java.io.File(binaryPath)
+                appendLog("[INFO] Starting rclone daemon")
+                appendLog("[INFO] Binary: $binaryPath (exists=${binFile.exists()}, size=${binFile.length()}, exec=${binFile.canExecute()})")
+                appendLog("[INFO] Port: $daemonPort | Config: $configPath")
+
                 val pb = ProcessBuilder(
                     binaryPath,
                     "rcd",
@@ -124,8 +135,11 @@ class RcloneForegroundService : Service() {
                     appendLog(formatLogLine(line))
                     extractStats(line)
                 }
+
+                val exitCode = process.waitFor()
+                appendLog("[WARN] Daemon exited with code $exitCode")
             } catch (e: Exception) {
-                appendLog("[ERROR] ${e.message}")
+                appendLog("[ERROR] Failed to start daemon: ${e.javaClass.simpleName}: ${e.message}")
             } finally {
                 isRunning = false
                 daemonPort = 0

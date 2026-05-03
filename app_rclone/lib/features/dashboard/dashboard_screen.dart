@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/rclone_providers.dart';
 import '../../core/models/job.dart';
 import '../../app.dart';
+import '../logs/logs_screen.dart';
 
 class DashboardScreen extends ConsumerStatefulWidget {
   const DashboardScreen({super.key});
@@ -163,6 +164,22 @@ class _DaemonCard extends ConsumerWidget {
             Text(
               daemon.errorMessage!,
               style: TextStyle(color: scheme.error, fontSize: 12),
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute<void>(
+                  builder: (_) => const LogsScreen(),
+                ),
+              ),
+              icon: const Icon(Icons.terminal, size: 14),
+              label: const Text('Ver logs de diagnóstico'),
+              style: TextButton.styleFrom(
+                padding: EdgeInsets.zero,
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
             ),
           ],
           const SizedBox(height: 16),

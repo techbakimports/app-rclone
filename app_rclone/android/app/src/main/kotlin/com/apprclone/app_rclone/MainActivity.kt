@@ -62,8 +62,17 @@ class MainActivity : FlutterActivity() {
                 override fun onCancel(args: Any?) { authEventSink = null }
             })
 
-        MethodChannel(flutterEngine.dartExecutor.binaryMessenger, methodChannelName)
-            .setMethodCallHandler { call, result ->
+        // Run the MethodChannel on a background thread so heavy operations
+        // (log serialization, file I/O) never block the Android main thread.
+        // openDocumentTree is the only handler that needs the main thread
+        // (startActivityForResult requirement) — it posts back via mainHandler.
+        val bgQueue = flutterEngine.dartExecutor.binaryMessenger.makeBackgroundTaskQueue()
+        MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            methodChannelName,
+            io.flutter.plugin.common.StandardMethodCodec.INSTANCE,
+            bgQueue,
+        ).setMethodCallHandler { call, result ->
                 when (call.method) {
 
                     // ── Binary ────────────────────────────────────────────────
@@ -126,8 +135,11 @@ class MainActivity : FlutterActivity() {
                             return@setMethodCallHandler
                         }
                         safPickCallback = result
-                        val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
-                        startActivityForResult(intent, OPEN_DOC_TREE_REQ_CODE)
+                        // startActivityForResult must run on the main thread
+                        mainHandler.post {
+                            val intent = Intent(Intent.ACTION_OPEN_DOCUMENT_TREE)
+                            startActivityForResult(intent, OPEN_DOC_TREE_REQ_CODE)
+                        }
                     }
                     "startSafBridge" -> {
                         val treeUri = call.argument<String>("treeUri") ?: run {

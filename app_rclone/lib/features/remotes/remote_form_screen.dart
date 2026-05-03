@@ -126,7 +126,10 @@ class _RemoteFormScreenState extends ConsumerState<RemoteFormScreen> {
                 .map(
                   (p) => DropdownMenuItem(
                     value: p.name,
-                    child: Text('${p.name} — ${p.description}'),
+                    child: Text(
+                      '${p.name} — ${p.description}',
+                      overflow: TextOverflow.ellipsis,
+                    ),
                   ),
                 )
                 .toList(),

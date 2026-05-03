@@ -227,10 +227,16 @@ class RcloneApi {
 
   Future<List<RcloneJob>> listJobs() async {
     final r = await _post('job/list');
-    final jobs = r['jobids'] as List? ?? [];
-    final futures = jobs.map((id) => getJob(id as int)).toList();
-    final results = await Future.wait(futures, eagerError: false);
-    return results.whereType<RcloneJob>().toList();
+    final ids = (r['jobids'] as List? ?? []).cast<int>();
+    // Cap at 50 most recent to avoid N+1 overload on the daemon
+    final recent = ids.length > 50 ? ids.sublist(ids.length - 50) : ids;
+    final jobs = <RcloneJob>[];
+    for (final id in recent) {
+      try {
+        jobs.add(await getJob(id));
+      } catch (_) {}
+    }
+    return jobs;
   }
 
   Future<RcloneJob> getJob(int jobId) async {
