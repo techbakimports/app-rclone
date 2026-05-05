@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/providers/rclone_providers.dart';
+import '../../core/rclone/rclone_service.dart';
 import '../../core/rclone/rclone_updater.dart';
 import '../logs/logs_screen.dart';
 
@@ -124,6 +126,17 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
           const Divider(),
 
+          // ── Armazenamento Externo (SAF) ──────────────────────────────
+          _SectionHeader('Armazenamento Externo'),
+          ListTile(
+            leading: const Icon(Icons.sd_storage_outlined),
+            title: const Text('Adicionar armazenamento externo'),
+            subtitle: const Text('Expõe pasta local via WebDAV bridge'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _addSafBridge(context),
+          ),
+          const Divider(),
+
           // ── Config ────────────────────────────────────────────────────
           _SectionHeader('Config'),
           ListTile(
@@ -146,6 +159,40 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           ),
         ],
       ),
+    );
+  }
+
+  Future<void> _addSafBridge(BuildContext context) async {
+    final service = ref.read(rcloneServiceProvider);
+    String? treeUri;
+    try {
+      treeUri = await service.openDocumentTree();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao abrir seletor: $e')),
+        );
+      }
+      return;
+    }
+    if (treeUri == null) return; // user cancelled
+
+    SafBridgeInfo? info;
+    try {
+      info = await service.startSafBridge(treeUri);
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Erro ao iniciar bridge: $e')),
+        );
+      }
+      return;
+    }
+
+    if (!context.mounted) return;
+    showDialog<void>(
+      context: context,
+      builder: (ctx) => _SafBridgeDialog(info: info!),
     );
   }
 
@@ -450,6 +497,94 @@ class _UpdateSheetState extends ConsumerState<_UpdateSheet> {
                     label:
                         Text(_release != null ? 'Download & Install' : 'Retry'),
                   ),
+        ],
+      ),
+    );
+  }
+}
+
+// ── SAF Bridge info dialog ────────────────────────────────────────────────────
+
+class _SafBridgeDialog extends StatelessWidget {
+  final SafBridgeInfo info;
+  const _SafBridgeDialog({required this.info});
+
+  @override
+  Widget build(BuildContext context) {
+    final url = info.webdavUrl;
+    return AlertDialog(
+      title: const Text('WebDAV Bridge ativo'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Adicione um remote WebDAV no rclone com as credenciais abaixo:',
+            style: TextStyle(fontSize: 13),
+          ),
+          const SizedBox(height: 16),
+          _InfoRow(label: 'URL', value: url),
+          _InfoRow(label: 'Usuário', value: info.user),
+          _InfoRow(label: 'Senha', value: info.pass),
+          const SizedBox(height: 8),
+          const Text(
+            'O bridge permanece ativo enquanto o app estiver em execução.',
+            style: TextStyle(fontSize: 11, color: Colors.grey),
+          ),
+        ],
+      ),
+      actions: [
+        TextButton(
+          onPressed: () {
+            Clipboard.setData(ClipboardData(
+              text: 'URL: $url\nUser: ${info.user}\nPass: ${info.pass}',
+            ));
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Credenciais copiadas')),
+            );
+          },
+          child: const Text('Copiar'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('OK'),
+        ),
+      ],
+    );
+  }
+}
+
+class _InfoRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const _InfoRow({required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 60,
+            child: Text(
+              label,
+              style: const TextStyle(
+                fontSize: 12,
+                color: Colors.grey,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(
+                fontSize: 12,
+                fontFamily: 'monospace',
+              ),
+            ),
+          ),
         ],
       ),
     );
