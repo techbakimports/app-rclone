@@ -4,11 +4,18 @@ import '../../core/models/job.dart';
 import '../../core/providers/rclone_providers.dart';
 import '../../app.dart';
 
-class TransfersScreen extends ConsumerWidget {
+class TransfersScreen extends ConsumerStatefulWidget {
   const TransfersScreen({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<TransfersScreen> createState() => _TransfersScreenState();
+}
+
+class _TransfersScreenState extends ConsumerState<TransfersScreen> {
+  bool _showOnlyActive = true;
+
+  @override
+  Widget build(BuildContext context) {
     final jobsAsync = ref.watch(jobsProvider);
     final statsAsync = ref.watch(transferStatsProvider);
 
@@ -16,6 +23,14 @@ class TransfersScreen extends ConsumerWidget {
       appBar: AppBar(
         title: const Text('TRANSFERS'),
         actions: [
+          IconButton(
+            icon: Icon(
+              _showOnlyActive ? Icons.filter_list : Icons.filter_list_off,
+              size: 20,
+            ),
+            tooltip: _showOnlyActive ? 'Mostrar todos' : 'Apenas ativos',
+            onPressed: () => setState(() => _showOnlyActive = !_showOnlyActive),
+          ),
           IconButton(
             icon: const Icon(Icons.delete_sweep, size: 20),
             tooltip: 'Reset stats',
@@ -35,7 +50,24 @@ class TransfersScreen extends ConsumerWidget {
           ),
           Expanded(
             child: jobsAsync.when(
-              data: (jobs) => _JobList(jobs: jobs),
+              data: (jobs) {
+                final filtered = _showOnlyActive
+                    ? jobs.where((j) => j.isActive).toList()
+                    : jobs;
+                return _JobList(
+                  jobs: filtered,
+                  showOnlyActive: _showOnlyActive,
+                  onClearCompleted: () async {
+                    final api = ref.read(rcloneApiProvider);
+                    for (final j in jobs.where((j) => !j.isActive)) {
+                      try {
+                        await api.stopJob(j.id);
+                      } catch (_) {}
+                    }
+                    ref.invalidate(jobsProvider);
+                  },
+                );
+              },
               loading: () =>
                   const Center(child: CircularProgressIndicator()),
               error: (e, _) =>
@@ -45,14 +77,14 @@ class TransfersScreen extends ConsumerWidget {
         ],
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _showNewJobDialog(context, ref),
+        onPressed: () => _showNewJobDialog(context),
         icon: const Icon(Icons.add),
         label: const Text('New Job'),
       ),
     );
   }
 
-  void _showNewJobDialog(BuildContext context, WidgetRef ref) {
+  void _showNewJobDialog(BuildContext context) {
     showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -125,29 +157,67 @@ class _Stat extends StatelessWidget {
 
 class _JobList extends ConsumerWidget {
   final List<RcloneJob> jobs;
-  const _JobList({required this.jobs});
+  final bool showOnlyActive;
+  final VoidCallback onClearCompleted;
+
+  const _JobList({
+    required this.jobs,
+    required this.showOnlyActive,
+    required this.onClearCompleted,
+  });
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     if (jobs.isEmpty) {
-      return const Center(
+      return Center(
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.swap_horiz, size: 64, color: AppColors.muted),
-            SizedBox(height: 8),
+            const Icon(Icons.swap_horiz, size: 64, color: AppColors.muted),
+            const SizedBox(height: 8),
             Text(
-              'No jobs',
-              style: TextStyle(color: AppColors.muted, fontSize: 16),
+              showOnlyActive ? 'Nenhum job ativo' : 'Nenhum job',
+              style: const TextStyle(color: AppColors.muted, fontSize: 16),
             ),
+            if (showOnlyActive) ...[
+              const SizedBox(height: 4),
+              const Text(
+                'Toque no filtro para ver o histórico',
+                style: TextStyle(color: AppColors.muted, fontSize: 12),
+              ),
+            ],
           ],
         ),
       );
     }
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
-      itemCount: jobs.length,
-      itemBuilder: (_, i) => _JobCard(job: jobs[i]),
+    return Column(
+      children: [
+        if (!showOnlyActive)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                TextButton.icon(
+                  onPressed: onClearCompleted,
+                  icon: const Icon(Icons.cleaning_services, size: 16),
+                  label: const Text('Limpar concluídos'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppColors.muted,
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        Expanded(
+          child: ListView.builder(
+            padding: const EdgeInsets.fromLTRB(12, 8, 12, 80),
+            itemCount: jobs.length,
+            itemBuilder: (_, i) => _JobCard(job: jobs[i]),
+          ),
+        ),
+      ],
     );
   }
 }
@@ -304,6 +374,7 @@ class _NewJobSheetState extends ConsumerState<_NewJobSheet> {
   final _dstCtrl = TextEditingController();
   String _jobType = 'copy';
   bool _submitting = false;
+  bool _background = false;
 
   @override
   void dispose() {
@@ -363,7 +434,19 @@ class _NewJobSheetState extends ConsumerState<_NewJobSheet> {
               prefixIcon: Icon(Icons.arrow_downward, size: 18),
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Executar em segundo plano'),
+            subtitle: const Text(
+              'WorkManager — continua mesmo com o app fechado',
+              style: TextStyle(fontSize: 11),
+            ),
+            secondary: const Icon(Icons.schedule, size: 20),
+            value: _background,
+            onChanged: (v) => setState(() => _background = v),
+          ),
+          const SizedBox(height: 8),
           FilledButton(
             onPressed: _submitting ? null : _startJob,
             child: _submitting
@@ -387,26 +470,40 @@ class _NewJobSheetState extends ConsumerState<_NewJobSheet> {
     if (src.isEmpty || dst.isEmpty) return;
 
     setState(() => _submitting = true);
-    final api = ref.read(rcloneApiProvider);
     try {
-      final int jobId;
-      switch (_jobType) {
-        case 'copy':
-          jobId = await api.startCopy(src, dst);
-        case 'move':
-          jobId = await api.startMove(src, dst);
-        case 'sync':
-          jobId = await api.startSync(src, dst);
-        case 'bisync':
-          jobId = await api.startBisync(src, dst);
-        default:
-          return;
-      }
-      if (mounted) {
-        Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Job #$jobId started')),
-        );
+      if (_background) {
+        final uuid = await ref.read(rcloneServiceProvider).enqueueSyncJob(
+              operation: _jobType,
+              srcFs: src,
+              dstFs: dst,
+            );
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Job agendado (WorkManager): $uuid')),
+          );
+        }
+      } else {
+        final api = ref.read(rcloneApiProvider);
+        final int jobId;
+        switch (_jobType) {
+          case 'copy':
+            jobId = await api.startCopy(src, dst);
+          case 'move':
+            jobId = await api.startMove(src, dst);
+          case 'sync':
+            jobId = await api.startSync(src, dst);
+          case 'bisync':
+            jobId = await api.startBisync(src, dst);
+          default:
+            return;
+        }
+        if (mounted) {
+          Navigator.pop(context);
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Job #$jobId started')),
+          );
+        }
       }
     } catch (e) {
       setState(() => _submitting = false);
