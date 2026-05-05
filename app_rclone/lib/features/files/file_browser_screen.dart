@@ -475,29 +475,53 @@ class _SinglePane extends ConsumerWidget {
             },
             loading: () =>
                 const Center(child: CircularProgressIndicator()),
-            error: (e, _) => Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline,
-                      size: 48, color: Color(0xFFFF5252)),
-                  const SizedBox(height: 8),
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Text(e.toString(),
+            error: (e, _) {
+              final msg = e.toString().toLowerCase();
+              final isNotFound = msg.contains('directory not found') ||
+                  msg.contains("doesn't exist") ||
+                  msg.contains('not found');
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isNotFound ? Icons.folder_off : Icons.error_outline,
+                      size: 48,
+                      color: isNotFound
+                          ? AppColors.muted
+                          : const Color(0xFFFF5252),
+                    ),
+                    const SizedBox(height: 8),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Text(
+                        isNotFound ? 'Pasta não encontrada' : e.toString(),
                         textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 12)),
-                  ),
-                  const SizedBox(height: 12),
-                  TextButton.icon(
-                    onPressed: () =>
-                        ref.invalidate(directoryListingProvider(path)),
-                    icon: const Icon(Icons.refresh),
-                    label: const Text('Tentar novamente'),
-                  ),
-                ],
-              ),
-            ),
+                        style: TextStyle(
+                          fontSize: isNotFound ? 14 : 12,
+                          color: isNotFound ? AppColors.muted : null,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    if (isNotFound && pane.history.isNotEmpty)
+                      TextButton.icon(
+                        onPressed: () =>
+                            onSetState(index, () => pane.goBack()),
+                        icon: const Icon(Icons.arrow_back),
+                        label: const Text('Voltar'),
+                      )
+                    else
+                      TextButton.icon(
+                        onPressed: () =>
+                            ref.invalidate(directoryListingProvider(path)),
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Tentar novamente'),
+                      ),
+                  ],
+                ),
+              );
+            },
           ),
         ),
       ],

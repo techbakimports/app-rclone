@@ -240,6 +240,8 @@ class _RemoteFormScreenState extends ConsumerState<RemoteFormScreen> {
           _paramControllers['token'] =
               TextEditingController(text: token);
           setState(() => _oauthState = _OAuthDone(token: token));
+          // Close the in-app browser tab opened during OAuth
+          closeInAppWebView();
           // Restart daemon if it was running
           if (wasDaemonRunning) notifier.start();
         }
@@ -260,7 +262,9 @@ class _RemoteFormScreenState extends ConsumerState<RemoteFormScreen> {
   Future<void> _openBrowser(String url) async {
     final uri = Uri.parse(url);
     if (await canLaunchUrl(uri)) {
-      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      // inAppBrowserView (Chrome Custom Tab) allows closeInAppWebView() to
+      // dismiss the tab automatically when the token arrives.
+      await launchUrl(uri, mode: LaunchMode.inAppBrowserView);
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -436,21 +440,14 @@ class _OAuthSection extends StatelessWidget {
             SizedBox(width: 12),
             Expanded(
               child: Text(
-                'Browser opened — complete the sign-in and return here.',
+                'Conclua o login no browser — ele fechará automaticamente.',
                 style: TextStyle(fontSize: 13),
               ),
             ),
           ],
         ),
-        const SizedBox(height: 12),
-        Text(
-          url,
-          style: const TextStyle(fontSize: 11, color: Colors.grey),
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-        ),
         const SizedBox(height: 8),
-        TextButton(onPressed: onCancel, child: const Text('Cancel')),
+        TextButton(onPressed: onCancel, child: const Text('Cancelar')),
       ],
     );
   }
