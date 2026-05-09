@@ -1,3 +1,4 @@
 .idea/
 *.iml
 implementation_plan.md
+.claude/
